@@ -58,10 +58,7 @@ def print_usage(program_name: str) -> None:
     print('    <SRC CIDR 2> <DST CIDR 2> <MTU 2> [ <TRIGGER LENGTH 2> ]')
 
 
-def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: scapy.packet.Packet) -> Optional[str]:
-    iface = packet.sniffed_on
-    if not isinstance(packet, (scapy.layers.inet.IP, scapy.layers.inet6.IPv6)):
-        packet = packet.payload
+def generate_reply(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: scapy.packet.Packet, iface: str) -> Optional[scapy.packet.Packet]:
     mtu, trigger = None, None  # type: Tuple[Optional[int], Optional[int]]
     if isinstance(packet, scapy.layers.inet.IP):
         if packet.src in pmtud_cache:
@@ -76,14 +73,10 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
         raw_packet = bytes(packet)
         if mtu is not None and trigger is not None and trigger < min(len(raw_packet), packet.len):
-            logging.info('{} -\u2192 {} MTU {}'.format(packet.src, packet.dst, mtu))
+            logging.info('{} -{}\u2192 {} MTU {}'.format(packet.src, iface or '', packet.dst, mtu))
             reply = scapy.layers.inet.IP(id=packet.id, ttl=64, dst=packet.src) / scapy.layers.inet.ICMP(type=3, code=4, nexthopmtu=mtu) / raw_packet[:28]
             pmtud_cache[packet.src] = None
-            try:
-                scapy.sendrecv.send(reply, verbose=False, iface=iface)
-            except Exception as e:
-                logging.error('Error sending packet: {}'.format(e))
-                return None
+            return reply
     elif isinstance(packet, scapy.layers.inet6.IPv6):
         if packet.src in pmtud_cache:
             return None
@@ -97,9 +90,35 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
         raw_packet = bytes(packet)
         if mtu is not None and trigger is not None and trigger < len(raw_packet):
-            logging.info('{} -\u2192 {} MTU {}'.format(packet.src, packet.dst, mtu))
+            logging.info('{} -{}\u2192 {} MTU {}'.format(packet.src, iface or '', packet.dst, mtu))
             reply = scapy.layers.inet6.IPv6(hlim=64, dst=packet.src) / scapy.layers.inet6.ICMPv6PacketTooBig(mtu=mtu) / raw_packet[:max(mtu - 48, 1232)]
             pmtud_cache[packet.src] = None
+            return reply
+    return None
+
+
+def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: scapy.packet.Packet) -> Optional[str]:
+    iface = packet.sniffed_on
+    if isinstance(packet, scapy.layers.l2.Ether):
+        reply = generate_reply(rules, pmtud_cache, packet.payload, iface)
+        if reply is not None:
+            reply = scapy.layers.l2.Ether(dst=packet.src, src=packet.dst) / reply
+            try:
+                scapy.sendrecv.sendp(reply, verbose=False, iface=iface)
+            except Exception as e:
+                logging.error('Error sending packet: {}'.format(e))
+                return None
+    elif isinstance(packet, (scapy.layers.inet.IP, scapy.layers.inet6.IPv6)):
+        reply = generate_reply(rules, pmtud_cache, packet, iface)
+        if reply is not None:
+            try:
+                scapy.sendrecv.send(reply, verbose=False, iface=iface)
+            except Exception as e:
+                logging.error('Error sending packet: {}'.format(e))
+                return None
+    elif packet.payload is not None:
+        reply = generate_reply(rules, pmtud_cache, packet.payload, iface)
+        if reply is not None:
             try:
                 scapy.sendrecv.send(reply, verbose=False, iface=iface)
             except Exception as e:
@@ -114,7 +133,7 @@ def main(argv: List[str]) -> int:
         print_usage(argv[0])
         return 0
     cache_items, cache_seconds = 1024, 10
-    iface = []  # type: List[str]
+    ifaces = []  # type: List[str]
     bpf = None  # type: Optional[str]
     rules = []  # type: List[Rule]
     with open(argv[1], 'r') as config_file:
@@ -126,7 +145,7 @@ def main(argv: List[str]) -> int:
                 if len(fields) != 2:
                     logging.error('Error in line {}: {}'.format(lineno + 1, line))
                     return 1
-                iface.append(fields[1])
+                ifaces.append(fields[1])
             elif fields[0] == 'filter':
                 bpf = ' '.join(fields[1:])
             elif fields[0] == 'cache':
@@ -161,11 +180,13 @@ def main(argv: List[str]) -> int:
                     logging.error('Error in line {}: {}'.format(lineno + 1, e))
                     return 1
                 rules.append(Rule(src, dst, mtu, trigger))
+    if 'any' in ifaces:
+        ifaces = []
 
     pmtud_cache = expiringdict.ExpiringDict(max_len=cache_items, max_age_seconds=cache_seconds)
 
     try:
-        scapy.sendrecv.sniff(prn=functools.partial(callback, rules, pmtud_cache), promisc=False, filter=bpf, iface=iface or None)
+        scapy.sendrecv.sniff(prn=functools.partial(callback, rules, pmtud_cache), promisc=False, filter=bpf, iface=ifaces or None)
     except Exception as e:
         logging.error('Error sniffing packets: {}'.format(e))
         return 1
