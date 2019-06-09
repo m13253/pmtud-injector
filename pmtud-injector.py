@@ -101,29 +101,17 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
     iface = packet.sniffed_on
     if isinstance(packet, scapy.layers.l2.Ether):
         reply = generate_reply(rules, pmtud_cache, packet.payload, iface)
-        if reply is not None:
-            reply = scapy.layers.l2.Ether(dst=packet.src, src=packet.dst) / reply
-            try:
-                scapy.sendrecv.sendp(reply, verbose=False, iface=iface)
-            except Exception as e:
-                logging.error('Error sending packet: {}'.format(e))
-                return None
     elif isinstance(packet, (scapy.layers.inet.IP, scapy.layers.inet6.IPv6)):
         reply = generate_reply(rules, pmtud_cache, packet, iface)
-        if reply is not None:
-            try:
-                scapy.sendrecv.send(reply, verbose=False, iface=iface)
-            except Exception as e:
-                logging.error('Error sending packet: {}'.format(e))
-                return None
     elif packet.payload is not None:
         reply = generate_reply(rules, pmtud_cache, packet.payload, iface)
-        if reply is not None:
-            try:
-                scapy.sendrecv.send(reply, verbose=False, iface=iface)
-            except Exception as e:
-                logging.error('Error sending packet: {}'.format(e))
-                return None
+    else:
+        return None
+    if reply is not None:
+        try:
+            scapy.sendrecv.send(reply, verbose=False, iface=iface)
+        except Exception as e:
+            logging.error('Error sending packet: {}'.format(e))
     return None
 
 
