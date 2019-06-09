@@ -28,6 +28,8 @@ import scapy.all
 import sys
 from typing import *
 
+IPv4_BROADCAST = ipaddress.IPv4Address('255.255.255.255')
+
 
 class Rule:
     def __init__(self, src: Union[ipaddress.IPv4Network, ipaddress.IPv6Network], dst: Union[ipaddress.IPv4Network, ipaddress.IPv6Network], mtu: int, trigger: int) -> None:
@@ -57,15 +59,18 @@ def print_usage(program_name: str) -> None:
 
 
 def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: scapy.packet.Packet) -> Optional[str]:
+    iface = packet.sniffed_on
     if not isinstance(packet, (scapy.layers.inet.IP, scapy.layers.inet6.IPv6)):
         packet = packet.payload
     mtu, trigger = None, None  # type: Tuple[Optional[int], Optional[int]]
     if isinstance(packet, scapy.layers.inet.IP):
+        if packet.src in pmtud_cache:
+            return None
         if packet.proto == 1 and packet.payload.type not in (0, 8):
             return None
         src = ipaddress.IPv4Address(packet.src)
         dst = ipaddress.IPv4Address(packet.dst)
-        if packet.src in pmtud_cache:
+        if src.is_multicast or src == IPv4_BROADCAST:
             return None
         for rule in rules:
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
@@ -75,16 +80,18 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
             reply = scapy.layers.inet.IP(id=packet.id, ttl=64, dst=packet.src) / scapy.layers.inet.ICMP(type=3, code=4, nexthopmtu=mtu) / raw_packet[:28]
             pmtud_cache[packet.src] = None
             try:
-                scapy.sendrecv.send(reply, verbose=False)
+                scapy.sendrecv.send(reply, verbose=False, iface=iface)
             except Exception as e:
                 logging.error('Error sending packet: {}'.format(e))
                 return None
     elif isinstance(packet, scapy.layers.inet6.IPv6):
+        if packet.src in pmtud_cache:
+            return None
         if packet.nh == 58 and packet.payload.type < 128:
             return None
         src = ipaddress.IPv6Address(packet.src)
         dst = ipaddress.IPv6Address(packet.dst)
-        if packet.src in pmtud_cache:
+        if src.is_multicast:
             return None
         for rule in rules:
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
@@ -94,7 +101,7 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
             reply = scapy.layers.inet6.IPv6(hlim=64, dst=packet.src) / scapy.layers.inet6.ICMPv6PacketTooBig(mtu=mtu) / raw_packet[:max(mtu - 48, 1232)]
             pmtud_cache[packet.src] = None
             try:
-                scapy.sendrecv.send(reply, verbose=False)
+                scapy.sendrecv.send(reply, verbose=False, iface=iface)
             except Exception as e:
                 logging.error('Error sending packet: {}'.format(e))
                 return None
