@@ -109,7 +109,7 @@ def main(argv: List[str]) -> int:
     cache_items, cache_seconds = 1024, 10
     iface = []  # type: List[str]
     bpf = None  # type: Optional[str]
-    rules = []  #type: List[Rule]
+    rules = []  # type: List[Rule]
     with open(argv[1], 'r') as config_file:
         for lineno, line in enumerate(config_file):
             fields = line.split('#', 1)[0].strip().split()
