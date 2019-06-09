@@ -72,7 +72,7 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
         raw_packet = bytes(packet)
         if mtu is not None and trigger is not None and trigger < min(len(raw_packet), packet.len):
             logging.info('{} -\u2192 {} MTU {}'.format(packet.src, packet.dst, mtu))
-            reply = scapy.layers.inet.IP(id=packet.id, ttl=64, src=packet.dst, dst=packet.src) / scapy.layers.inet.ICMP(type=3, code=4, nexthopmtu=mtu) / raw_packet[:28]
+            reply = scapy.layers.inet.IP(id=packet.id, ttl=64, dst=packet.src) / scapy.layers.inet.ICMP(type=3, code=4, nexthopmtu=mtu) / raw_packet[:28]
             pmtud_cache[packet.src] = None
             try:
                 scapy.sendrecv.send(reply, verbose=False)
@@ -91,7 +91,7 @@ def callback(rules: List[Rule], pmtud_cache: MutableMapping[str, None], packet: 
         raw_packet = bytes(packet)
         if mtu is not None and trigger is not None and trigger < len(raw_packet):
             logging.info('{} -\u2192 {} MTU {}'.format(packet.src, packet.dst, mtu))
-            reply = scapy.layers.inet6.IPv6(hlim=64, src=packet.dst, dst=packet.src) / scapy.layers.inet6.ICMPv6PacketTooBig(mtu=mtu) / raw_packet[:max(mtu - 48, 1232)]
+            reply = scapy.layers.inet6.IPv6(hlim=64, dst=packet.src) / scapy.layers.inet6.ICMPv6PacketTooBig(mtu=mtu) / raw_packet[:max(mtu - 48, 1232)]
             pmtud_cache[packet.src] = None
             try:
                 scapy.sendrecv.send(reply, verbose=False)
