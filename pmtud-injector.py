@@ -67,7 +67,7 @@ def generate_reply(rules: List[Rule], pmtud_cache: MutableMapping[str, None], pa
             return None
         src = ipaddress.IPv4Address(packet.src)
         dst = ipaddress.IPv4Address(packet.dst)
-        if src.is_multicast or src == IPv4_BROADCAST:
+        if src.is_multicast or src == IPv4_BROADCAST or dst.is_multicast or dst == IPv4_BROADCAST:
             return None
         for rule in rules:
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
@@ -84,7 +84,7 @@ def generate_reply(rules: List[Rule], pmtud_cache: MutableMapping[str, None], pa
             return None
         src = ipaddress.IPv6Address(packet.src)
         dst = ipaddress.IPv6Address(packet.dst)
-        if src.is_multicast:
+        if src.is_multicast or dst.is_multicast:
             return None
         for rule in rules:
             mtu, trigger = rule.mtu_upperbound(src, dst, mtu, trigger)
